@@ -9,6 +9,7 @@ from discord.ext import commands
 import asyncio
 import threading
 import time
+import base64 # <-- NEW IMPORT REQUIRED FOR BASE64 ENCODING
 
 load_dotenv()
 
@@ -19,47 +20,6 @@ SHOPIFY_STORE_DOMAIN = os.getenv('SHOPIFY_STORE_DOMAIN')
 
 # --- Flask App (for Webhook Listener) ---
 app = Flask(__name__)
-
-# Helper to verify Shopify webhook signature
-def verify_shopify_webhook(data, hmac_header):
-    # DANGEROUS IN PRODUCTION: This check allows webhooks through if secret is not set.
-    # ALWAYS ensure SHOPIFY_WEBHOOK_SECRET is properly configured in production.
-    if not SHOPIFY_WEBHOOK_SECRET or SHOPIFY_WEBHOOK_SECRET == 'YOUR_SHOPIFY_WEBHOOK_SECRET_HERE':
-        print("Shopify webhook secret not set in .env or is default. Skipping verification (DANGEROUS!).")
-        return True
-
-    # --- UPDATED DEBUGGING AND LOGIC ---
-    print(f"DEBUG: Raw Data received (first 100 chars): {data[:100]}")
-    print(f"DEBUG: Raw HMAC Header received: {hmac_header}")
-    print(f"DEBUG: Secret from ENV: {SHOPIFY_WEBHOOK_SECRET}")
-
-    # Ensure secret is bytes for hmac.new
-    secret_bytes = SHOPIFY_WEBHOOK_SECRET.encode('utf-8')
-    print(f"DEBUG: Secret as bytes (first 10): {secret_bytes[:10]}")
-
-    # Ensure data is bytes (request.get_data() should already return bytes)
-    # We'll explicitly cast to bytes to be absolutely certain for hmac.new
-    data_bytes = data
-    if isinstance(data, str):
-        data_bytes = data.encode('utf-8')
-    print(f"DEBUG: Data as bytes (first 100): {data_bytes[:100]}")
-
-    # Calculate the digest using the secret and the raw data
-    digest = hmac.new(secret_bytes, data_bytes, hashlib.sha256).hexdigest()
-    print(f"DEBUG: Generated Digest: {digest}")
-
-    # Convert both the received hmac_header and our generated digest to lowercase
-    # before comparison to handle potential case sensitivity issues.
-    hmac_header_lower = hmac_header.lower()
-    digest_lower = digest.lower()
-    print(f"DEBUG: HMAC Header (lower): {hmac_header_lower}")
-    print(f"DEBUG: Generated Digest (lower): {digest_lower}")
-
-    comparison_result = hmac.compare_digest(digest_lower, hmac_header_lower)
-    print(f"DEBUG: Comparison Result: {comparison_result}")
-    # --- END DEBUG STATEMENTS ---
-
-    return comparison_result
 
 # Data storage for monitored collections and their roles/channels
 # We use a JSON file as a simple "database" for persistence across restarts
@@ -84,21 +44,64 @@ def load_data():
         MONITORED_COLLECTIONS = {}
         PREVIOUS_INVENTORIES = {}
 
-# Function to save data to JSON file
+# Save data to JSON file
 def save_data():
-    with open('monitored_data.json', 'w') as f:
-        json.dump({
-            "monitored_collections": MONITORED_COLLECTIONS,
-            "previous_inventories": PREVIOUS_INVENTORIES
-        }, f, indent=2)
+    try:
+        with open('monitored_data.json', 'w') as f:
+            json.dump({
+                "monitored_collections": MONITORED_COLLECTIONS,
+                "previous_inventories": PREVIOUS_INVENTORIES
+            }, f, indent=4)
+        # print("Monitoring data saved.") # Uncomment for verbose saving logs
+    except Exception as e:
+        print(f"Error saving data: {e}")
 
 # Load data when the app starts
 load_data()
 
 
+# Helper to verify Shopify webhook signature
+def verify_shopify_webhook(data, hmac_header):
+    if not SHOPIFY_WEBHOOK_SECRET or SHOPIFY_WEBHOOK_SECRET == 'YOUR_SHOPIFY_WEBHOOK_SECRET_HERE':
+        print("Shopify webhook secret not set in .env or is default. Skipping verification (DANGEROUS!).")
+        return True
+
+    # --- DEBUG PRINTS ---
+    print(f"DEBUG: Raw Data received (first 100 chars): {data[:100]}")
+    print(f"DEBUG: Raw HMAC Header received: {hmac_header}")
+    print(f"DEBUG: Secret from ENV: {SHOPIFY_WEBHOOK_SECRET}")
+
+    secret_bytes = SHOPIFY_WEBHOOK_SECRET.encode('utf-8')
+    print(f"DEBUG: Secret as bytes (first 10): {secret_bytes[:10]}")
+
+    data_bytes = data
+    if isinstance(data, str):
+        data_bytes = data.encode('utf-8')
+    print(f"DEBUG: Data as bytes (first 100): {data_bytes[:100]}")
+
+    # CRITICAL CHANGE: Calculate the raw SHA256 digest, then Base64 encode it
+    calculated_hmac_bytes = hmac.new(secret_bytes, data_bytes, hashlib.sha256).digest()
+    generated_digest_base64 = base64.b64encode(calculated_hmac_bytes).decode('utf-8') # Convert to Base64 string
+
+    print(f"DEBUG: Generated Digest (Base64): {generated_digest_base64}")
+
+    # Normalize both strings to lowercase for robust comparison
+    hmac_header_lower = hmac_header.lower()
+    generated_digest_base64_lower = generated_digest_base64.lower()
+
+    print(f"DEBUG: HMAC Header (lower): {hmac_header_lower}")
+    print(f"DEBUG: Generated Digest (lower): {generated_digest_base64_lower}")
+
+    comparison_result = hmac.compare_digest(generated_digest_base64_lower, hmac_header_lower)
+    print(f"DEBUG: Comparison Result: {comparison_result}")
+    # --- END DEBUG PRINTS ---
+
+    return comparison_result
+
+
 @app.route('/shopify_webhook', methods=['POST'])
 def shopify_webhook():
-    data = request.get_data()
+    data = request.get_data() # This gets the raw bytes of the request body
     hmac_header = request.headers.get('X-Shopify-Hmac-Sha256')
     topic = request.headers.get('X-Shopify-Topic')
     product_id_from_header = request.headers.get('X-Shopify-Product-Id')
