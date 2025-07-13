@@ -295,7 +295,29 @@ def run_flask_app():
     app.run(host='0.0.0.0', port=os.environ.get('PORT', 5000), debug=False, use_reloader=False)
 
 def run_discord_bot():
-    bot.run(DISCORD_BOT_TOKEN)
+    try:
+        bot.run(DISCORD_BOT_TOKEN)
+    except discord.LoginFailure:
+        print("ERROR: Discord bot failed to log in. Check DISCORD_BOT_TOKEN. Is it correct and not expired?")
+    except discord.HTTPException as e:
+        print(f"ERROR: Discord bot HTTP Exception: {e} (Likely connection issue or API error)")
+    except Exception as e:
+        print(f"ERROR: An unexpected error occurred while running the Discord bot: {e}")
+
+if __name__ == '__main__':
+    # Run both the Flask server and the Discord bot in separate threads.
+    # This allows them to run concurrently within a single Python script.
+    flask_thread = threading.Thread(target=run_flask_app)
+    discord_thread = threading.Thread(target=run_discord_bot)
+
+    flask_thread.start()
+    # Give Flask a moment to start up before starting the Discord bot
+    time.sleep(3)
+    discord_thread.start()
+
+    # The main thread can optionally wait for them to finish
+    flask_thread.join()
+    discord_thread.join()
 
 if __name__ == '__main__':
     # Run both the Flask server and the Discord bot in separate threads.
