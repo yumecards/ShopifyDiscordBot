@@ -28,28 +28,38 @@ def verify_shopify_webhook(data, hmac_header):
         print("Shopify webhook secret not set in .env or is default. Skipping verification (DANGEROUS!).")
         return True
 
-    # --- ADD THESE PRINT STATEMENTS FOR DEBUGGING ---
-    print(f"DEBUG: Data (first 100 chars): {data[:100]}")
-    print(f"DEBUG: HMAC Header: {hmac_header}")
+    # --- UPDATED DEBUGGING AND LOGIC ---
+    print(f"DEBUG: Raw Data received (first 100 chars): {data[:100]}")
+    print(f"DEBUG: Raw HMAC Header received: {hmac_header}")
     print(f"DEBUG: Secret from ENV: {SHOPIFY_WEBHOOK_SECRET}")
 
     # Ensure secret is bytes for hmac.new
     secret_bytes = SHOPIFY_WEBHOOK_SECRET.encode('utf-8')
     print(f"DEBUG: Secret as bytes (first 10): {secret_bytes[:10]}")
 
-    # Ensure data is bytes
+    # Ensure data is bytes (request.get_data() should already return bytes)
+    # We'll explicitly cast to bytes to be absolutely certain for hmac.new
+    data_bytes = data
     if isinstance(data, str):
         data_bytes = data.encode('utf-8')
-    else:
-        data_bytes = data # Assume it's already bytes if not str
     print(f"DEBUG: Data as bytes (first 100): {data_bytes[:100]}")
 
+    # Calculate the digest using the secret and the raw data
     digest = hmac.new(secret_bytes, data_bytes, hashlib.sha256).hexdigest()
     print(f"DEBUG: Generated Digest: {digest}")
-    print(f"DEBUG: Comparison Result: {hmac.compare_digest(digest, hmac_header)}")
+
+    # Convert both the received hmac_header and our generated digest to lowercase
+    # before comparison to handle potential case sensitivity issues.
+    hmac_header_lower = hmac_header.lower()
+    digest_lower = digest.lower()
+    print(f"DEBUG: HMAC Header (lower): {hmac_header_lower}")
+    print(f"DEBUG: Generated Digest (lower): {digest_lower}")
+
+    comparison_result = hmac.compare_digest(digest_lower, hmac_header_lower)
+    print(f"DEBUG: Comparison Result: {comparison_result}")
     # --- END DEBUG STATEMENTS ---
 
-    return hmac.compare_digest(digest, hmac_header)
+    return comparison_result
 
 # Data storage for monitored collections and their roles/channels
 # We use a JSON file as a simple "database" for persistence across restarts
